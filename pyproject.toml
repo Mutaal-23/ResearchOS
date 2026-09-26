@@ -1,0 +1,81 @@
+[project]
+name = "researchos"
+version = "0.1.0"
+description = "ResearchOS - a citation-grounded RAG and research intelligence platform"
+readme = "README.md"
+authors = [
+    { name = "Mutaal Imran", email = "mutaalimran2k3@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "fastapi>=0.141.1",
+    "fastembed>=0.8.1",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "lxml>=6.1.3",
+    "numpy>=2.5.3",
+    "psycopg[binary,pool]>=3.3.6",
+    "pydantic-settings>=2.15.0",
+    "pypdf>=6.19.0",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.32",
+    "qdrant-client>=1.19.1",
+    "trafilatura>=2.2.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+researchos = "researchos.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.15,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.9",
+]
+
+# --------------------------------------------------------------------------- #
+# Ruff - linter + formatter. Replaces flake8 + black + isort + pylint.
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes - undefined names, unused imports
+    "I",     # isort - import ordering
+    "UP",    # pyupgrade - modernise syntax for the target version
+    "B",     # bugbear - bug patterns that linting can catch
+    "SIM",   # simplify - remove redundant code
+    "C4",    # comprehensions
+    "ASYNC", # blocking calls inside async functions
+    "RUF",   # ruff-specific rules
+]
+ignore = [
+    "E501",  # line length is the formatter's job, not the linter's
+    "B008",  # FastAPI's Depends() in defaults is the official pattern
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports are intentional in __init__.py
+"tests/**" = ["B011"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["researchos"]
+
+# --------------------------------------------------------------------------- #
+# Pytest
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q --strict-markers"
+filterwarnings = ["error::DeprecationWarning:researchos.*"]

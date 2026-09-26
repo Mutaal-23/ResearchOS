@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Frontend build output (Tailwind CLI emits a real CSS file here)
+researchos/web/static/css/tailwind.css
+node_modules/
+
+# Runtime data - never commit the databases or their contents
+data/
+!data/.gitkeep
+
+# Local uploads and evaluation run artifacts
+uploads/
+evals/runs/
+*.log

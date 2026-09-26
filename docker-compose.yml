@@ -1,0 +1,61 @@
+# ResearchOS - local development services.
+#
+# Usage:
+#   docker compose up -d          start both services in the background
+#   docker compose ps             check status and health
+#   docker compose logs -f qdrant tail logs
+#   docker compose down           stop, keep data
+#   docker compose down -v        stop and DELETE data volumes (clean slate)
+
+name: researchos
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    container_name: researchos-qdrant
+    restart: unless-stopped
+    ports:
+      # host:container. Qdrant's HTTP API is 6333, gRPC is 6334.
+      - "6333:6333"
+      - "6334:6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-researchos-dev-key}
+      QDRANT__LOG_LEVEL: ${QDRANT_LOG_LEVEL:-INFO}
+      # Whitelist the web UI to only be served locally.
+      QDRANT__WEB_UI__EXTERNAL_HOST: ${QDRANT_EXTERNAL_HOST:-localhost}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # Qdrant's /healthz returns 200 once the storage layer is writable.
+      # Compose waits for this to pass before marking the service "started",
+      # which stops the app crash-looping while Qdrant is still booting.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: researchos-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-researchos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-researchos}
+      POSTGRES_DB: ${POSTGRES_DB:-researchos}
+      # Deterministic collation so ORDER BY does not change between machines.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-researchos} -d ${POSTGRES_DB:-researchos}"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+volumes:
+  qdrant_data:
+  postgres_data:
