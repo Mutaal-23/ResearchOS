@@ -1,0 +1,48 @@
+{
+  "questions": [
+    {
+      "text": "What is the Ideology of Pakistan?",
+      "expected_sources": {
+        "SUBSTITUTE_DOC_ID:22": 2,
+        "SUBSTITUTE_DOC_ID:23": 1
+      }
+    },
+    {
+      "text": "Who was Muhammad bin Qasim and what role did he play in the conquest of Sindh?",
+      "expected_sources": {
+        "SUBSTITUTE_DOC_ID:26": 2
+      }
+    },
+    {
+      "text": "Describe the Simla Agreement of 1945.",
+      "expected_sources": {
+        "SUBSTITUTE_DOC_ID:41": 2
+      }
+    },
+    {
+      "text": "What were the Objectives Resolution and when was it adopted?",
+      "expected_sources": {
+        "SUBSTITUTE_DOC_ID:9": 2
+      }
+    },
+    {
+      "text": "Explain the role of the All India Muslim League in the demand for separate electorates.",
+      "expected_sources": {
+        "SUBSTITUTE_DOC_ID:37": 2,
+        "SUBSTITUTE_DOC_ID:38": 1
+      }
+    },
+    {
+      "text": "What is the significance of the Tashkent Declaration?",
+      "expected_sources": {
+        "SUBSTITUTE_DOC_ID:52": 2
+      }
+    }
+  ],
+  "_notes": {
+    "grading": "Values are relevance grades: 2 = the passage answers the question, 1 = same topic but incomplete, 0 = explicitly not relevant. Only positive grades count toward recall.",
+    "source_keys": "A key is either `<document_id>` or `<document_id>:<page_number>`. Page-level keys are stricter and better, but only sensible for paginated formats like PDF.",
+    "placeholder": "SUBSTITUTE_DOC_ID is a placeholder. Replace it with the real document id from `researchos documents`. Leaving it in place scores recall 0 by construction rather than by any fault of the retriever.",
+    "how_to_find_pages": "Ingest the document, then read the chunks for a page with `uv run researchos documents` and the GET /api/documents/{id} endpoint, and confirm by eye which page actually discusses the topic."
+  }
+}

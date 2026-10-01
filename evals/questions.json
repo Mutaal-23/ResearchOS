@@ -1,0 +1,40 @@
+[
+  {
+    "text": "What is the Ideology of Pakistan?",
+    "expected_sources": {
+      "SUBSTITUTE_DOC_ID:22": 2,
+      "SUBSTITUTE_DOC_ID:23": 1
+    }
+  },
+  {
+    "text": "Who was Muhammad bin Qasim and what role did he play in the conquest of Sindh?",
+    "expected_sources": {
+      "SUBSTITUTE_DOC_ID:26": 2
+    }
+  },
+  {
+    "text": "Describe the Simla Agreement of 1945.",
+    "expected_sources": {
+      "SUBSTITUTE_DOC_ID:41": 2
+    }
+  },
+  {
+    "text": "What were the Objectives Resolution and when was it adopted?",
+    "expected_sources": {
+      "SUBSTITUTE_DOC_ID:9": 2
+    }
+  },
+  {
+    "text": "Explain the role of the All India Muslim League in the demand for a separate electorates.",
+    "expected_sources": {
+      "SUBSTITUTE_DOC_ID:37": 2,
+      "SUBSTITUTE_DOC_ID:38": 1
+    }
+  },
+  {
+    "text": "What is the significance of the Tashkent Declaration?",
+    "expected_sources": {
+      "SUBSTITUTE_DOC_ID:52": 2
+    }
+  }
+]

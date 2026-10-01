@@ -19,7 +19,6 @@ from fastapi.staticfiles import StaticFiles
 from researchos import __version__
 from researchos.config import get_settings
 from researchos.db.engine import close_pool, init_pool
-from researchos.db.engine import ping as pg_ping
 from researchos.logging_config import get_logger, setup_logging
 
 log = get_logger(__name__)
@@ -64,35 +63,36 @@ def create_app() -> FastAPI:
         redoc_url=None,
     )
 
-    # ------------------------------------------------------------------ #
-    # Health check. Reports per-dependency state so a failing deploy is
-    # obvious. Returns 503 when degraded, because a load balancer that trusts
-    # a 200 here will happily route traffic to a broken instance.
-    # ------------------------------------------------------------------ #
-    @app.get("/health", tags=["ops"])
-    def health() -> JSONResponse:
-        db_ok = pg_ping()
-        body = {
-            "status": "ok" if db_ok else "degraded",
-            "version": __version__,
-            "checks": {"postgres": "ok" if db_ok else "unreachable"},
-        }
-        return JSONResponse(
-            body, status_code=status.HTTP_200_OK if db_ok else status.HTTP_503_SERVICE_UNAVAILABLE
-        )
+    # Routers. health lives in the api package too, registered before the
+    # catch-all so /health stays reachable even if a router fails to import.
+    from researchos.api.routers import documents, eval_runs, health, search
+
+    app.include_router(health.router)
+    app.include_router(search.router)
+    app.include_router(documents.router)
+    app.include_router(eval_runs.router)
 
     # ------------------------------------------------------------------ #
-    # Root: hand off to the web UI.
+    # Web UI.
+    #
+    # Jinja2Templates is constructed at request time rather than once at
+    # startup, because the factory is called inside a test process where the
+    # template directory may not exist yet.
     # ------------------------------------------------------------------ #
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def root() -> HTMLResponse:
-        index = WEB_DIR / "templates" / "index.html"
-        if not index.is_file():
+    def root(request: Request) -> HTMLResponse:
+        templates = WEB_DIR / "templates"
+        if not (templates / "index.html").is_file():
             return HTMLResponse(
                 "<h1>ResearchOS</h1><p>API is live. UI not built yet - see /docs.</p>",
                 status_code=status.HTTP_200_OK,
             )
-        return HTMLResponse(index.read_text(encoding="utf-8"))
+
+        from fastapi.templating import Jinja2Templates
+
+        return Jinja2Templates(directory=str(templates)).TemplateResponse(
+            request=request, name="index.html"
+        )
 
     # ------------------------------------------------------------------ #
     # Uniform error shape. An API that returns a different body for a 404

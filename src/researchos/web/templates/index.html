@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid gap-6 lg:grid-cols-[1fr_20rem] items-start">
+  <section>
+    <form id="ask-form" class="card">
+      <label class="label" for="question">Ask the corpus a question</label>
+      <div class="flex gap-2">
+        <input
+          id="question"
+          name="question"
+          type="text"
+          class="input flex-1"
+          placeholder="What is the Ideology of Pakistan?"
+          autocomplete="off"
+          required
+        />
+        <button type="submit" class="btn btn-primary" id="ask-button">Ask</button>
+      </div>
+      <p class="hint">
+        Answers cite the pages they came from. If the corpus does not cover
+        the question, it will say so rather than guess.
+      </p>
+    </form>
+
+    <div id="status" class="hidden card" role="status" aria-live="polite"></div>
+
+    <article id="answer" class="hidden card">
+      <div class="flex items-baseline justify-between gap-4">
+        <h2 class="text-lg font-semibold">Answer</h2>
+        <span id="answer-latency" class="text-xs text-stone-500"></span>
+      </div>
+      <div id="answer-body" class="prose mt-3"></div>
+      <div id="citations" class="mt-5"></div>
+    </article>
+
+    <article id="no-evidence" class="hidden card border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40">
+      <h2 class="text-lg font-semibold text-amber-900 dark:text-amber-200">No supporting evidence</h2>
+      <p id="no-evidence-body" class="mt-2 text-sm text-amber-900 dark:text-amber-200"></p>
+    </article>
+  </section>
+
+  <aside class="card">
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-stone-500">Indexed documents</h2>
+    <div id="documents" class="mt-3 space-y-2">
+      <p class="text-sm text-stone-500">Loading…</p>
+    </div>
+  </aside>
+</div>
+
+<script src="/static/app.js" defer></script>
+{% endblock %}

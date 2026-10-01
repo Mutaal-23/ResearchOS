@@ -99,6 +99,67 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def cmd_evaluate(args: argparse.Namespace) -> int:
+    """Run the evaluation harness over the question set."""
+    import asyncio
+
+    from researchos.api.routers.search import load_corpus
+    from researchos.db import engine
+    from researchos.evaluation.runner import (
+        EvaluationError,
+        evaluate,
+        load_questions,
+    )
+    from researchos.logging_config import setup_logging
+
+    setup_logging()
+    settings = get_settings()
+
+    path = args.questions or settings.eval_questions_path
+    try:
+        questions = load_questions(path)
+    except EvaluationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    engine.init_pool(settings)
+    try:
+        chunks_by_id, index, vocab = load_corpus()
+        if not chunks_by_id:
+            print(
+                "error: no chunks indexed, so recall would be 0 by construction. "
+                "Run `researchos ingest FILE` first.",
+                file=sys.stderr,
+            )
+            return 1
+
+        print(f"evaluating {len(questions)} questions against {len(chunks_by_id)} chunks")
+
+        def progress(message: str) -> None:
+            print(f"  {message}", flush=True)
+
+        outcome = asyncio.run(
+            evaluate(
+                questions=questions,
+                chunks_by_id=chunks_by_id,
+                bm25_index=index,
+                vocabulary=vocab,
+                name=args.name,
+                settings=settings,
+            )
+        )
+    finally:
+        engine.close_pool()
+
+    summary = outcome["summary"]
+    print(f"\nrun {outcome['run_id']}")
+    for key in sorted(summary):
+        value = summary[key]
+        shown = f"{value:.4f}" if isinstance(value, float) else str(value)
+        print(f"  {key:<20} {shown}")
+    return 0
+
+
 def cmd_documents(_: argparse.Namespace) -> int:
     """List indexed documents."""
     from researchos.db import engine
@@ -140,6 +201,18 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.set_defaults(func=cmd_ingest)
 
     sub.add_parser("documents", help="list indexed documents").set_defaults(func=cmd_documents)
+
+    evaluate_parser = sub.add_parser(
+        "evaluate", help="measure retrieval quality against a question set"
+    )
+    evaluate_parser.add_argument(
+        "--questions",
+        type=Path,
+        default=None,
+        help="path to questions.json (defaults to EVAL_QUESTIONS_PATH)",
+    )
+    evaluate_parser.add_argument("--name", default="cli-run", help="name for this run")
+    evaluate_parser.set_defaults(func=cmd_evaluate)
 
     serve = sub.add_parser("serve", help="run the development server")
     serve.add_argument("--host", default=None)

@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ResearchOS</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <script>
+      // Applied before first paint so a dark-mode user never sees a white flash.
+      if (
+        localStorage.theme === 'dark' ||
+        (!localStorage.theme && matchMedia('(prefers-color-scheme: dark)').matches)
+      ) {
+        document.documentElement.classList.add('dark');
+      }
+    </script>
+  </head>
+  <body class="h-full bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100">
+    <div class="mx-auto flex min-h-full max-w-5xl flex-col px-4 py-8">
+      <header class="mb-8 flex items-center justify-between gap-4">
+        <div>
+          <h1 class="text-xl font-semibold tracking-tight">ResearchOS</h1>
+          <p class="text-sm text-stone-500 dark:text-stone-400">
+            Citation-grounded answers from your own documents
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <a href="/docs" class="btn btn-ghost text-xs">API</a>
+          <button id="theme-toggle" class="btn btn-ghost text-xs" aria-label="Toggle colour theme">
+            Theme
+          </button>
+        </div>
+      </header>
+
+      <main class="flex-1">
+        {% block content %}{% endblock %}
+      </main>
+
+      <footer class="mt-10 border-t border-stone-200 pt-4 text-xs text-stone-500 dark:border-stone-800">
+        Every factual sentence is cited. Uncited claims are a bug, not a style choice.
+      </footer>
+    </div>
+  </body>
+</html>

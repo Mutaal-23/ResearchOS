@@ -1,0 +1,165 @@
+/*
+ * Plain CSS, no build step.
+ *
+ * A Tailwind CDN script would be one line instead of this file, but it ships
+ * a production-blocking request to a third party and cannot work offline. A
+ * build pipeline for four screens is more machinery than the screens are
+ * worth. The colour tokens below are the only thing that changes between
+ * themes.
+ */
+:root {
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --border: #e7e5e4;
+  --text: #1c1917;
+  --muted: #78716c;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
+  --accent: #0d9488;
+  --radius: 0.75rem;
+}
+
+.dark {
+  --bg: #0c0a09;
+  --surface: #1c1917;
+  --border: #292524;
+  --text: #fafaf9;
+  --muted: #a8a29e;
+  --primary: #818cf8;
+  --primary-hover: #a5b4fc;
+  --accent: #2dd4bf;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+}
+
+.label {
+  display: block;
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9375rem;
+}
+
+.input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+.btn {
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  border-color: var(--border);
+  color: var(--muted);
+  background: transparent;
+}
+
+.btn-ghost:hover {
+  color: var(--text);
+}
+
+.hint {
+  margin-top: 0.625rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.prose {
+  line-height: 1.7;
+  font-size: 0.9375rem;
+}
+
+.prose p + p {
+  margin-top: 0.75rem;
+}
+
+/* Citations render as clickable pills rather than [1] brackets, so the
+   reader can see at a glance that a claim is sourced. */
+.cite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.125rem;
+  margin: 0 0.125rem;
+  padding: 0 0.25rem;
+  border-radius: 0.3125rem;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  vertical-align: super;
+  cursor: pointer;
+  border: none;
+}
+
+.source {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.source-title {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.source-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.source-excerpt {
+  font-size: 0.8125rem;
+  color: var(--muted);
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+}
+
+.hidden {
+  display: none;
+}

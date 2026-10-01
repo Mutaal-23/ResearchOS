@@ -15,14 +15,17 @@ system says so instead of answering from the model's training data.
 | 1 | Foundation, config, DB, migrations | done |
 | 2 | Loaders, cleaner, page quality | done |
 | 3 | Chunking, BM25, embeddings | done |
-| 4 | Qdrant hybrid store, reranking, generation | code done, live run pending quota |
-| 5 | Evaluation harness | not started |
-| 6 | HTTP API and web UI | not started |
+| 4 | Qdrant hybrid store, reranking, generation | done |
+| 5 | Evaluation harness (Recall@k, MRR, nDCG, citation precision) | done |
+| 6 | HTTP API and web UI | done |
 
-Everything except phases 5 and 6 is implemented, tested, and lint-clean.
-The one thing not yet exercised live is a full corpus ingest, because the
-Gemini free tier allows 1000 embedding requests per day and that quota is
-currently spent. It resets at midnight UTC.
+All phases are implemented, and **67 tests pass** with no network, no
+containers and no API key. Ruff is clean.
+
+The one thing not yet exercised against real data is a full corpus ingest and
+a scored evaluation, because the Gemini free tier allows 1000 embedding
+requests per day and that quota is spent. It resets at midnight UTC. See
+[Verifying it end to end](#verifying-it-end-to-end).
 
 ## Architecture
 
@@ -90,12 +93,93 @@ PostgreSQL uses host port 5433 so it does not collide with a local install on
 uv run researchos ingest path/to/document.pdf
 ```
 
-Then query through the API, or use the CLI.
+List what is indexed:
+
+```bash
+uv run researchos documents
+```
+
+Ask a question:
+
+```bash
+uv run researchos serve
+```
+
+Then open http://127.0.0.1:8000 and ask in the browser, or use the API
+directly:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What is the Ideology of Pakistan?"}'
+```
+
+## Evaluation
+
+Retrieval quality is measured, not asserted. `evals/questions.json` holds
+questions with hand-written relevance grades (2 = the passage answers the
+question, 1 = same topic but incomplete), and the harness reports:
+
+| Metric | Measures |
+|---|---|
+| `recall_at_10` | whether the right chunks are reachable at all |
+| `precision_at_10` | how much noise comes back |
+| `mrr` | how high the answer ranks |
+| `ndcg_at_10` | whole-ranking quality with graded relevance |
+| `citation_precision` | whether the model cited the right chunk |
+| `grounded` | fraction of answers with at least one citation |
+
+```bash
+uv run researchos evaluate --name baseline
+```
+
+Before running, replace the `SUBSTITUTE_DOC_ID` placeholders in
+`evals/questions.json` with your real document id and the pages that actually
+answer each question. Left in place, recall is 0 by construction, which says
+nothing about the retriever.
+
+Every run freezes its config alongside the numbers, because a retrieval score
+without its settings is meaningless later - 0.42 could mean the code regressed
+or a threshold moved. Results land in `eval_runs` / `eval_results` and are
+readable at `GET /api/evals`.
+
+## API
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/health` | per-dependency status, 503 when degraded |
+| `POST` | `/api/ask` | grounded answer with citations |
+| `POST` | `/api/search` | retrieve passages without generating |
+| `GET` | `/api/documents` | list indexed documents |
+| `GET` | `/api/documents/{id}` | one document plus sample chunks |
+| `DELETE` | `/api/documents/{id}` | remove from both stores |
+| `GET` | `/api/evals` | recent evaluation runs |
+| `GET` | `/api/evals/{id}` | per-question detail |
+
+Two deliberate choices in `/api/ask`:
+
+- **No chat history.** RAG over a fixed corpus is stateless per question.
+  Carrying conversation context into retrieval is how systems end up citing
+  passages from three turns ago.
+- **Ungrounded answers return 200, not an error.** "Not in the corpus" is a
+  true statement about the evidence, and reporting it as a failure would
+  misrepresent what happened. Only genuine faults return 5xx, and a spent
+  embedding quota returns 429 so clients wait rather than restart.
+
+## Verifying it end to end
+
+After the daily quota resets:
+
+```bash
+uv run researchos ingest samples/pdfcoffee.com_pakistan-studies-mr-qazmi-pdf-free.pdf
+uv run researchos documents
+uv run researchos evaluate --name baseline
+```
 
 ## Testing
 
 ```bash
-uv run pytest              # 38 tests, fully offline
+uv run pytest              # 67 tests, fully offline
 uv run ruff check .
 ```
 
