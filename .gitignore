@@ -31,3 +31,4 @@ data/
 uploads/
 evals/runs/
 *.log
+scratch/

@@ -103,6 +103,9 @@ def main() -> int:
     try:
         applied = run_migrations()
     except Exception:
+        # No noqa needed: BLE001 allows handlers that call log.exception(),
+        # because the full traceback is recorded rather than swallowed.
+        log.exception("migration failed")
         return 1
     finally:
         from researchos.db.engine import close_pool

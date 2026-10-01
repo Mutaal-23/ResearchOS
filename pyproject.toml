@@ -54,6 +54,7 @@ select = [
     "I",     # isort - import ordering
     "UP",    # pyupgrade - modernise syntax for the target version
     "B",     # bugbear - bug patterns that linting can catch
+    "BLE",   # blind except - catch broad Exception; must be justified
     "SIM",   # simplify - remove redundant code
     "C4",    # comprehensions
     "ASYNC", # blocking calls inside async functions

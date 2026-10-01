@@ -121,6 +121,6 @@ def ping() -> bool:
         with connection() as conn, conn.cursor() as cur:
             cur.execute("SELECT 1")
             return cur.fetchone() is not None
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001  # a health check must report, not raise
         log.warning("postgres ping failed: %s", exc)
         return False
