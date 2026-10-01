@@ -291,3 +291,45 @@ def test_empty_retrieval_raises_rather_than_answering() -> None:
 
     with pytest.raises(NoEvidenceError):
         asyncio.run(generate_answer("anything at all", []))
+
+
+def test_pacing_spaces_consecutive_requests(monkeypatch) -> None:
+    """Requests must be separated in time, or one run burns the daily quota.
+
+    Regression test for a bug where _pace() read the timestamp but never
+    updated it, so it slept on the first call and then never again.
+    """
+    import researchos.retrieval.embedder as embedder
+
+    slept: list[float] = []
+    now = [1000.0]
+
+    def fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(embedder.time, "sleep", fake_sleep)
+    monkeypatch.setattr(embedder.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(embedder, "_last_request_at", 1000.0)
+
+    embedder._pace()
+    embedder._pace()
+    embedder._pace()
+
+    # Each call waits the full interval relative to the previous one.
+    assert slept == [embedder.EMBED_REQUEST_INTERVAL] * 3
+
+
+def test_pacing_does_not_sleep_when_already_idle(monkeypatch) -> None:
+    """After a pause there is nothing to wait for; a needless sleep would
+    make every ingest slower for no benefit."""
+    import researchos.retrieval.embedder as embedder
+
+    slept: list[float] = []
+    monkeypatch.setattr(embedder.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(embedder.time, "monotonic", lambda: 100_000.0)
+    monkeypatch.setattr(embedder, "_last_request_at", 0.0)
+
+    embedder._pace()
+
+    assert slept == []

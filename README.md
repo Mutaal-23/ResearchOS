@@ -19,12 +19,15 @@ system says so instead of answering from the model's training data.
 | 5 | Evaluation harness (Recall@k, MRR, nDCG, citation precision) | done |
 | 6 | HTTP API and web UI | done |
 
-All phases are implemented, and **67 tests pass** with no network, no
+All phases are implemented, and **69 tests pass** with no network, no
 containers and no API key. Ruff is clean.
 
 The one thing not yet exercised against real data is a full corpus ingest and
-a scored evaluation, because the Gemini free tier allows 1000 embedding
-requests per day and that quota is spent. It resets at midnight UTC. See
+a scored evaluation. The Gemini free tier allows 1000 embedding requests per
+day, and a burst of batches spends that in seconds: the 296-page sample needs
+22 requests but a single unslewed run exhausted the daily quota. Requests are
+therefore paced 4s apart, which puts a full ingest in the region of 90 seconds
+of API time rather than a couple. See
 [Verifying it end to end](#verifying-it-end-to-end).
 
 ## Architecture
@@ -179,7 +182,7 @@ uv run researchos evaluate --name baseline
 ## Testing
 
 ```bash
-uv run pytest              # 67 tests, fully offline
+uv run pytest              # 69 tests, fully offline
 uv run ruff check .
 ```
 
@@ -208,9 +211,14 @@ The important ones:
 ## Known limitations
 
 - **Daily embedding quota.** The free Gemini tier allows 1000 embedding
-  requests per day. A 685-chunk corpus needs about 22 batched requests, so
-  several documents can exhaust it. `QuotaExhausted` is raised immediately
-  rather than retried, because retrying cannot succeed before the reset.
+  requests per day, and requests are paced `EMBED_REQUEST_INTERVAL` (4s)
+  apart because a burst spends the day's allowance in seconds. A 685-chunk
+  corpus needs ~22 batched requests, so the sample fits comfortably once the
+  quota is fresh. Two things are worth knowing: Gemini's error text says
+  `model: gemini-embedding-1.0` even when `gemini-embedding-001` is
+  requested, and its "retry in 12s" refers to the short-term rate limiter,
+  not the daily quota. `QuotaExhausted` is raised immediately rather than
+  retried, because retrying cannot succeed before midnight UTC.
 - **OCR quality drives everything.** The bundled sample is a scanned
   textbook; 45 of 296 pages are rejected as unusable. Chunk quality is capped
   by extraction quality.

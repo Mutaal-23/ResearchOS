@@ -40,6 +40,35 @@ _API_ROOT: Final[str] = "https://generativelanguage.googleapis.com/v1beta/models
 # were tried first and tripped the rate limiter on a full-corpus ingest.
 BATCH_SIZE: Final[int] = 32
 
+# Serial batches, with a pause between them.
+#
+# The free tier allows 1000 embedding requests per DAY, and a burst of large
+# batches exhausts that quota in seconds - measured: 6 back-to-back batches
+# of 32 returned 429 on the first. Embedding a whole document therefore
+# takes minutes, not seconds, and is paced rather than fired as fast as the
+# socket accepts.
+#
+# EMBED_REQUEST_INTERVAL is a floor between requests. It is deliberately
+# conservative: overrunning the quota mid-document loses every chunk, and
+# being slower costs only wall-clock time.
+EMBED_REQUEST_INTERVAL: Final[float] = 4.0
+_last_request_at: float = 0.0
+
+
+def _pace() -> None:
+    """Block until EMBED_REQUEST_INTERVAL has passed since the last request.
+
+    Module-level state rather than a local timer, so the pacing also holds
+    across concurrent callers in one process - a per-call timer would not.
+    """
+    global _last_request_at
+
+    elapsed = time.monotonic() - _last_request_at
+    if elapsed < EMBED_REQUEST_INTERVAL:
+        time.sleep(EMBED_REQUEST_INTERVAL - elapsed)
+    _last_request_at = time.monotonic()
+
+
 # Retry on these. 429 is rate limiting, 503 is transient upstream. A 400 is
 # a real bug in our request and must NOT be retried, or we hammer the API
 # with a request that can never succeed.
@@ -151,9 +180,11 @@ def _post(url: str, key: str, payload: dict[str, object]) -> dict:
                 delay = _retry_delay(response, attempt)
                 raise QuotaExhausted(
                     f"Gemini embedding quota exhausted (free tier allows "
-                    f"{QUOTA_DAILY_LIMIT} requests/day). Resets in "
-                    f"{delay / 3600:.1f}h. Use a smaller document, wait for the "
-                    f"quota to reset, or switch to a paid key.",
+                    f"{QUOTA_DAILY_LIMIT} requests/day, and a burst of large "
+                    f"batches uses it in seconds). The API suggests retrying "
+                    f"in {delay:.0f}s, but that is the short-term rate limiter, "
+                    f"not the daily quota - it resets at midnight UTC. Retry "
+                    f"then, use a smaller document, or switch to a paid key.",
                     retry_after=delay,
                 ) from None
 
@@ -197,6 +228,8 @@ def embed_texts(
     vectors: list[list[float]] = []
 
     for start in range(0, len(texts), BATCH_SIZE):
+        _pace()
+
         batch = texts[start : start + BATCH_SIZE]
         requests_payload = [
             {
