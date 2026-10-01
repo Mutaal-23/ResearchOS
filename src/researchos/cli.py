@@ -11,8 +11,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from researchos import __version__
+from researchos.config import get_settings
+from researchos.ingestion.loaders import DocumentError
+from researchos.retrieval.embedder import EmbeddingError
 
 
 def cmd_migrate(_: argparse.Namespace) -> int:
@@ -52,10 +56,70 @@ def cmd_check(_: argparse.Namespace) -> int:
     print(f"  postgres : {settings.database_url_safe}")
     print(f"  qdrant   : {settings.qdrant_url}")
     print(f"  embed    : {settings.embedding_model} ({settings.embedding_dim}d)")
-    print(f"  rerank   : {settings.reranker_model}")
+    print(f"  sparse   : {settings.sparse_model} (rerank via Gemini)")
     print(f"  llm      : {' -> '.join(settings.gemini_models)}")
     print(f"  chunking : {settings.chunk_size_tokens}t / {settings.chunk_overlap_tokens}t overlap")
     print(f"  top_k    : {settings.retrieval_top_k} of {settings.retrieval_candidates} candidates")
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    """Ingest one or more files into the index."""
+    from researchos.db import engine
+    from researchos.ingestion.pipeline import IngestionError, ingest_file
+    from researchos.logging_config import setup_logging
+
+    setup_logging()
+    settings = get_settings()
+    engine.init_pool(settings)
+
+    failures = 0
+    try:
+        for raw_path in args.paths:
+            path = Path(raw_path).expanduser().resolve()
+            print(f"\n{path.name}")
+            try:
+                result = ingest_file(path, progress=lambda m: print(f"  {m}"))
+            except (IngestionError, DocumentError, EmbeddingError) as exc:
+                # Quota exhaustion is expected and not a crash. Report it and
+                # move to the next file, so one spent quota does not abandon
+                # the whole batch.
+                print(f"  FAILED: {exc}", file=sys.stderr)
+                failures += 1
+                continue
+
+            print(
+                f"  done: {result.chunk_count} chunks from "
+                f"{result.usable_pages}/{result.total_pages} pages "
+                f"in {result.duration_seconds}s"
+            )
+    finally:
+        engine.close_pool()
+
+    return 1 if failures else 0
+
+
+def cmd_documents(_: argparse.Namespace) -> int:
+    """List indexed documents."""
+    from researchos.db import engine
+    from researchos.ingestion.pipeline import list_documents
+
+    engine.init_pool(get_settings())
+    try:
+        rows = list_documents()
+    finally:
+        engine.close_pool()
+
+    if not rows:
+        print("no documents indexed yet")
+        return 0
+
+    print(f"{'title':<44} {'type':<5} {'pages':>5} {'chunks':>7}  status")
+    for row in rows:
+        print(
+            f"{row['title'][:44]:<44} {row['source_type']:<5} "
+            f"{row['n_pages'] or 0:>5} {row['chunk_count']:>7}  {row['status']}"
+        )
     return 0
 
 
@@ -70,6 +134,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check", help="verify configuration, no side effects").set_defaults(
         func=cmd_check
     )
+
+    ingest = sub.add_parser("ingest", help="index documents into the search store")
+    ingest.add_argument("paths", nargs="+", help="files to ingest (.pdf or .txt)")
+    ingest.set_defaults(func=cmd_ingest)
+
+    sub.add_parser("documents", help="list indexed documents").set_defaults(func=cmd_documents)
 
     serve = sub.add_parser("serve", help="run the development server")
     serve.add_argument("--host", default=None)
