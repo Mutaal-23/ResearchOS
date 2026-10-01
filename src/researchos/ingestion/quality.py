@@ -218,7 +218,9 @@ ALNUM_FLOOR = 0.73
 # title are, so this is only counted as a signal in aggregate - and only
 # when the word is longer than 4 characters, which excludes "UK", "USA"
 # and the stray single glyphs that legitimate text is full of.
-MIXED_CASE_WORD = re.compile(r"\b(?![A-Z]{2,}\b)[a-z]*[A-Z][a-z]+[A-Z][a-z]*\b|\b[a-z]+[A-Z][a-z]{2,}\b")
+MIXED_CASE_WORD = re.compile(
+    r"\b(?![A-Z]{2,}\b)[a-z]*[A-Z][a-z]+[A-Z][a-z]*\b|\b[a-z]+[A-Z][a-z]{2,}\b"
+)
 
 
 @dataclass(frozen=True, slots=True)
