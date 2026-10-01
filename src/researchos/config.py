@@ -69,14 +69,23 @@ class Settings(BaseSettings):
     qdrant_collection: str = "researchos_chunks"
 
     # --- Embeddings / reranking -------------------------------------------
-    embedding_model: str = "BAAI/bge-small-en-v1.5"
-    reranker_model: str = "BAAI/bge-reranker-base"
+    # Dense embeddings come from the Gemini API rather than a local ONNX
+    # model. Hugging Face rate-limits this host (HTTP 429), and a hosted
+    # embedding endpoint keeps the pipeline identical - Qdrant stores a
+    # float vector regardless of who produced it.
+    embedding_model: str = "gemini-embedding-001"
+
+    # Sparse vectors are computed by our own BM25 implementation
+    # (retrieval/bm25.py). It needs no model at all, which is both faster
+    # and a better way to actually understand what BM25 does.
+    sparse_model: str = "bm25-local"
 
     embedding_dim: int = Field(
-        default=384,
+        default=768,
         ge=1,
-        description="Must match the output width of embedding_model. Bumping the "
-        "model without recreating the collection produces a shape mismatch.",
+        description="Must match the output width of embedding_model. Changing it "
+        "requires recreating the Qdrant collection and re-embedding "
+        "everything already indexed.",
     )
 
     # --- Chunking ----------------------------------------------------------

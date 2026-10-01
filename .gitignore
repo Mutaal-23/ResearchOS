@@ -32,3 +32,11 @@ uploads/
 evals/runs/
 *.log
 scratch/
+
+# Sample corpora. Source documents are not part of the code, and scanned
+# textbooks are large and often under copyright - they belong on disk, not
+# in git history. Committed once by mistake before this rule existed; the
+# blob stays in history until the next gc, which is why .git is 59M.
+samples/
+*.pdf
+!docs/**/*.pdf
