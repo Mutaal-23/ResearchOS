@@ -21,6 +21,7 @@ the single most important detail in this file.
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Final
 
@@ -33,35 +34,100 @@ log = get_logger(__name__)
 
 _API_ROOT: Final[str] = "https://generativelanguage.googleapis.com/v1beta/models"
 
-# Gemini accepts a batch, but the payload has a size limit. 100 short
-# passages stays comfortably under it while still cutting round trips 100x.
-BATCH_SIZE: Final[int] = 100
+# Gemini accepts a batch, but there is a payload limit, and a 685-chunk
+# document is several requests. Batches of 32 keep each request small enough
+# to stay under the limit while still cutting round trips 32x. Larger batches
+# were tried first and tripped the rate limiter on a full-corpus ingest.
+BATCH_SIZE: Final[int] = 32
 
 # Retry on these. 429 is rate limiting, 503 is transient upstream. A 400 is
 # a real bug in our request and must NOT be retried, or we hammer the API
 # with a request that can never succeed.
 RETRYABLE_STATUS: Final[frozenset[int]] = frozenset({429, 500, 502, 503, 504})
 
-MAX_ATTEMPTS: Final[int] = 4
-BACKOFF_BASE: Final[float] = 1.5
+# The Gemini free tier rate-limits at roughly 1500 requests per minute, and
+# a 685-chunk document is 7 batches. Exceeding it returns 429 with a
+# Retry-After header, so the backoff must honour that header rather than
+# guess. Honouring it is not optional politeness: guessing too low means
+# every retry is refused, and the run fails despite the quota recovering.
+MAX_ATTEMPTS: Final[int] = 8
+BACKOFF_BASE: Final[float] = 2.0
+MAX_BACKOFF_SECONDS: Final[float] = 60.0
 
 
 class EmbeddingError(RuntimeError):
     """Raised when embeddings cannot be produced after all retries."""
 
 
+class QuotaExhausted(EmbeddingError):
+    """The free-tier daily embedding quota is spent.
+
+    Distinct from a generic EmbeddingError because the remedy differs. A
+    transient failure should be retried; this will not succeed until the
+    quota resets at midnight UTC, so callers must not retry and must tell the
+    user what actually happened rather than reporting a vague error.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+# Gemini's free tier is capped at 1000 embedding requests PER DAY, not per
+# minute, and exceeding it returns 429 with a "RESOURCE_EXHAUSTED" body. No
+# amount of retrying fixes that - the quota resets at midnight UTC. Callers
+# must treat QuotaExhausted as terminal and surface it, not loop.
+QUOTA_DAILY_LIMIT = 1000
+
+# "Please retry in 26.203288238s" - the quota API returns the reset delay in
+# the body, not in a Retry-After header.
+_RETRY_IN_RE = re.compile(r"retry in ([\d.]+)s")
+
+
+def _retry_delay(response: httpx.Response | None, attempt: int) -> float:
+    """How long to wait before retrying.
+
+    A server-provided delay always wins, because it is the only number that
+    reflects the actual state of the quota. Gemini puts it in the response
+    BODY ("Please retry in 26.2s") rather than in a Retry-After header, so
+    the header alone is not enough - parsing only headers meant every retry
+    used our own guess and hammered an already-exhausted quota.
+    """
+    if response is not None:
+        try:
+            match = _RETRY_IN_RE.search(response.text)
+            if match:
+                return min(float(match.group(1)), MAX_BACKOFF_SECONDS)
+        except AttributeError, ValueError:
+            pass
+
+        header = response.headers.get("retry-after")
+        if header:
+            try:
+                return min(float(header), MAX_BACKOFF_SECONDS)
+            except ValueError:
+                # Retry-After may be an HTTP date rather than seconds. We
+                # cannot parse dates reliably here, so fall through to our
+                # own curve rather than crashing on a malformed header.
+                pass
+
+    return min(BACKOFF_BASE**attempt, MAX_BACKOFF_SECONDS)
+
+
 def _post(url: str, key: str, payload: dict[str, object]) -> dict:
-    """POST with retry and exponential backoff.
+    """POST with retry and backoff.
 
     Exponential because a constant delay guarantees a retry stampede: every
     failed client retries at the same instant and re-triggers the rate limit.
     Growing the delay spreads the retries out so the limiter can recover.
     """
     last_error: Exception | None = None
+    last_status: int | None = None
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        response: httpx.Response | None = None
         try:
-            response = httpx.post(url, params={"key": key}, json=payload, timeout=60.0)
+            response = httpx.post(url, params={"key": key}, json=payload, timeout=120.0)
         except httpx.HTTPError as exc:
             last_error = exc
         else:
@@ -69,17 +135,32 @@ def _post(url: str, key: str, payload: dict[str, object]) -> dict:
                 return response.json()
 
             if response.status_code not in RETRYABLE_STATUS:
-                # Non-retryable: surface it immediately. Retrying a 400 four
-                # times wastes 10 seconds and tells us nothing new.
+                # Non-retryable: surface it immediately. Retrying a 400 eight
+                # times wastes a minute and tells us nothing new.
                 raise EmbeddingError(
                     f"Embedding API rejected the request (HTTP {response.status_code}): "
                     f"{response.text[:300]}"
                 )
 
+            last_status = response.status_code
+
+            # Daily quota exhaustion is terminal for this run. Retrying would
+            # burn several minutes to arrive at the same answer, so raise now
+            # with the reset time attached.
+            if "RESOURCE_EXHAUSTED" in response.text or "quota" in response.text.lower():
+                delay = _retry_delay(response, attempt)
+                raise QuotaExhausted(
+                    f"Gemini embedding quota exhausted (free tier allows "
+                    f"{QUOTA_DAILY_LIMIT} requests/day). Resets in "
+                    f"{delay / 3600:.1f}h. Use a smaller document, wait for the "
+                    f"quota to reset, or switch to a paid key.",
+                    retry_after=delay,
+                ) from None
+
             last_error = EmbeddingError(f"HTTP {response.status_code}")
 
         if attempt < MAX_ATTEMPTS:
-            delay = BACKOFF_BASE**attempt
+            delay = _retry_delay(response, attempt)
             log.warning(
                 "embedding attempt %d/%d failed (%s), retrying in %.1fs",
                 attempt,
@@ -89,7 +170,10 @@ def _post(url: str, key: str, payload: dict[str, object]) -> dict:
             )
             time.sleep(delay)
 
-    raise EmbeddingError(f"Embedding API failed after {MAX_ATTEMPTS} attempts: {last_error}")
+    raise EmbeddingError(
+        f"Embedding API failed after {MAX_ATTEMPTS} attempts "
+        f"(last status {last_status}): {last_error}"
+    )
 
 
 def embed_texts(
