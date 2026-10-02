@@ -256,6 +256,44 @@ def build_sparse_vectors(
     return vectors
 
 
+def indexed_chunk_ids(document_id: uuid.UUID, settings: Settings | None = None) -> set[uuid.UUID]:
+    """Which of this document's chunks already have vectors.
+
+    Ingest is resumable and uses this to skip work already done: Qdrant is the
+    record of truth here rather than a flag on the chunk row, because it is the
+    only store whose write actually completes.
+    """
+    cfg = settings or get_settings()
+    found: set[uuid.UUID] = set()
+    offset: str | None = None
+
+    while True:
+        body: dict[str, Any] = {
+            "filter": {"must": [{"key": "document_id", "match": {"value": str(document_id)}}]},
+            "limit": 1000,
+            "with_payload": False,
+            "with_vector": False,
+        }
+        if offset is not None:
+            body["offset"] = offset
+
+        with _client(cfg) as client:
+            data = _request(
+                client,
+                "POST",
+                f"/collections/{cfg.qdrant_collection}/points/scroll",
+                json=body,
+            )
+
+        result = data["result"]
+        for point in result["points"]:
+            found.add(uuid.UUID(str(point["id"])))
+
+        offset = result.get("next_page_offset")
+        if offset is None:
+            return found
+
+
 def count_points(settings: Settings | None = None) -> int:
     """Number of indexed points. Used by health checks and the CLI."""
     cfg = settings or get_settings()

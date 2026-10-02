@@ -1,40 +1,51 @@
-[
-  {
-    "text": "What is the Ideology of Pakistan?",
-    "expected_sources": {
-      "SUBSTITUTE_DOC_ID:22": 2,
-      "SUBSTITUTE_DOC_ID:23": 1
+{
+  "questions": [
+    {
+      "text": "What is the Ideology of Pakistan?",
+      "expected_sources": {
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:140": 2,
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:141": 1
+      }
+    },
+    {
+      "text": "Who was Muhammad bin Qasim and what role did he play in the conquest of Sindh?",
+      "expected_sources": {
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:23": 2,
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:22": 1
+      }
+    },
+    {
+      "text": "Describe the Simla Agreement of 1945.",
+      "expected_sources": {
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:121": 2,
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:122": 1
+      }
+    },
+    {
+      "text": "What were the Objectives Resolution and when was it adopted?",
+      "expected_sources": {
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:194": 2
+      }
+    },
+    {
+      "text": "Explain the role of the All India Muslim League in the demand for separate electorates.",
+      "expected_sources": {
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:84": 2,
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:83": 1
+      }
+    },
+    {
+      "text": "What is the significance of the Tashkent Declaration?",
+      "expected_sources": {
+        "6a5a886c-d07c-403b-91b9-e7cc30c1f48e:158": 2
+      }
     }
-  },
-  {
-    "text": "Who was Muhammad bin Qasim and what role did he play in the conquest of Sindh?",
-    "expected_sources": {
-      "SUBSTITUTE_DOC_ID:26": 2
-    }
-  },
-  {
-    "text": "Describe the Simla Agreement of 1945.",
-    "expected_sources": {
-      "SUBSTITUTE_DOC_ID:41": 2
-    }
-  },
-  {
-    "text": "What were the Objectives Resolution and when was it adopted?",
-    "expected_sources": {
-      "SUBSTITUTE_DOC_ID:9": 2
-    }
-  },
-  {
-    "text": "Explain the role of the All India Muslim League in the demand for a separate electorates.",
-    "expected_sources": {
-      "SUBSTITUTE_DOC_ID:37": 2,
-      "SUBSTITUTE_DOC_ID:38": 1
-    }
-  },
-  {
-    "text": "What is the significance of the Tashkent Declaration?",
-    "expected_sources": {
-      "SUBSTITUTE_DOC_ID:52": 2
-    }
+  ],
+  "_notes": {
+    "grading": "Values are relevance grades: 2 = the passage answers the question, 1 = same topic but incomplete. Only positive grades count toward recall.",
+    "source_keys": "A key is either `<document_id>` or `<document_id>:<page_number>`. Page-level keys are stricter and better, but only sensible for paginated formats like PDF.",
+    "corpus": "pdfcoffee.com_pakistan-studies-mr-qazmi-pdf-free.pdf, 296 pages, 251 judged usable, 685 chunks.",
+    "how_these_were_chosen": "Each page was picked by running the query and reading the top hits, not by guessing. Re-derive them after any re-chunking, since page numbers are stable but chunk boundaries are not.",
+    "reproducing": "`uv run researchos ingest <pdf>` then `uv run researchos evaluate`. Both the document id and the expected pages are recorded here so a re-ingest can be compared against the same yardstick."
   }
-]
+}

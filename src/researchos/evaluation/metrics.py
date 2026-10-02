@@ -119,13 +119,27 @@ def ndcg_at_k(
     progressively less, then divide by the ideal ranking's DCG. Normalising
     by the best achievable score is what keeps this comparable across
     questions with different numbers of relevant chunks.
+
+    Sources are de-duplicated before scoring. Retrieval is chunk-level but
+    relevance is judged per source, so a page split into three chunks appears
+    three times in the retrieved list. Counting each occurrence would add its
+    gain three times while the ideal ranking counts the grade once - and the
+    result exceeds 1.0, which is not a number nDCG is allowed to take. Each
+    source is credited once, at the rank where it first appeared.
     """
     if not grades:
         return 0.0
 
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for source in retrieved[:k]:
+        if source not in seen:
+            seen.add(source)
+            deduped.append(source)
+
     dcg = sum(
         grades.get(source, 0) / math.log2(position + 1)
-        for position, source in enumerate(retrieved[:k], start=1)
+        for position, source in enumerate(deduped, start=1)
     )
 
     # Ideal ordering: highest grades first.
@@ -173,11 +187,18 @@ def mean(values: Sequence[float]) -> float:
 
 
 def aggregate(results: Sequence[RetrievalMetrics], k: int = 10) -> dict[str, float]:
-    """Average every metric across a run."""
+    """Average every metric across a run.
+
+    `scored_questions` counts the questions that produced a score, which is
+    fewer than the number attempted whenever one errored. Keeping the two
+    apart matters: a run where every question crashed has no scores to average,
+    and reporting that as a low recall would blame the retriever for a
+    generation failure.
+    """
     return {
         f"recall_at_{k}": mean([r.recall_at_k for r in results]),
         f"precision_at_{k}": mean([r.precision_at_k for r in results]),
         "mrr": mean([r.mrr for r in results]),
         f"ndcg_at_{k}": mean([r.ndcg_at_k for r in results]),
-        "questions": float(len(results)),
+        "scored_questions": len(results),
     }

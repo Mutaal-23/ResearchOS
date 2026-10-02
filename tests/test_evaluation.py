@@ -98,7 +98,7 @@ def test_aggregate_averages_across_questions() -> None:
     bad = Question("q2", {"a": 2})
     summary = aggregate([score_retrieval(["a"], good), score_retrieval(["x"], bad)])
     assert summary["recall_at_10"] == 0.5
-    assert summary["questions"] == 2
+    assert summary["scored_questions"] == 2
 
 
 def test_aggregate_of_nothing_is_zero_not_an_error() -> None:
@@ -317,3 +317,33 @@ def test_quota_exhaustion_returns_429(client, monkeypatch) -> None:
 
     response = client.post("/api/ask", json={"question": "anything?"})
     assert response.status_code == 429
+
+
+def test_ndcg_can_never_exceed_one() -> None:
+    """The invariant that exposed a real bug.
+
+    Relevance is graded per source but retrieval returns chunks, so one page
+    can appear several times in the retrieved list. Counting each occurrence
+    added its gain repeatedly while the ideal ranking counted the grade once,
+    and the metric returned 1.2357 - a value nDCG is not allowed to take.
+    """
+    grades = {"a": 2, "b": 1}
+    retrieved = ["a", "a", "a", "a", "b", "b", "b"]
+    assert ndcg_at_k(retrieved, grades, 10) <= 1.0
+
+
+def test_ndcg_credits_a_repeated_source_once_at_its_first_rank() -> None:
+    grades = {"a": 2}
+    once = ndcg_at_k(["a"], grades, 10)
+    assert ndcg_at_k(["a", "a", "a", "a"], grades, 10) == pytest.approx(once)
+
+
+def test_ndcg_repetition_does_not_inflate_a_mixed_ranking() -> None:
+    grades = {"a": 2, "b": 1}
+    # Repetition is neutral, not a penalty: both collapse to the ideal
+    # ["a", "b"] at first-appearance rank.
+    assert ndcg_at_k(["a", "b", "a", "a"], grades, 10) == pytest.approx(1.0)
+    assert ndcg_at_k(["a", "a", "a", "b"], grades, 10) == pytest.approx(1.0)
+    # Order still decides, independently of repetition.
+    assert ndcg_at_k(["b", "a"], grades, 10) < 1.0
+    assert ndcg_at_k(["b", "b", "a"], grades, 10) < 1.0

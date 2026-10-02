@@ -19,15 +19,22 @@ retryable, nothing is persisted), then write Postgres, then Qdrant, then
 commit. A failure at any point before commit leaves an incomplete job row,
 never a half-indexed document.
 
-Idempotence is the other property that matters. Re-ingesting the same file
-must not duplicate chunks. Since chunk ids are generated fresh each run, the
-guard is an explicit delete of the document's old rows and vectors before
-inserting, not a uniqueness constraint that happens to catch it.
+Ingest is resumable, which is what makes it survivable on a metered
+embedding provider. The document and its chunk text are committed as
+'processing' before any embedding is attempted, then indexed in batches and
+marked 'ready'. A quota failure partway through therefore leaves the parsed
+text on disk, and re-running the command resumes from the chunks Qdrant has
+not yet seen instead of re-parsing the PDF and spending quota from nothing.
+
+Idempotence follows from the same mechanism: a finished document is recognised
+by content hash and skipped, so re-ingesting a file cannot duplicate chunks
+even though chunk ids are minted fresh on each parse.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 import uuid
 from collections.abc import Callable
@@ -49,9 +56,16 @@ from researchos.retrieval.qdrant_store import (
     build_sparse_vectors,
     delete_by_document,
     index_chunks,
+    indexed_chunk_ids,
 )
 
 log = get_logger(__name__)
+
+# Chunks embedded and upserted as one resumable unit. Sized above the
+# embedder's 32-text API batch so a unit is a couple of requests: large enough
+# that recomputing lexical statistics is not the bottleneck, small enough that
+# a quota failure does not discard much work.
+INDEX_BATCH_CHUNKS = 64
 
 SUPPORTED_SUFFIXES = {".pdf", ".txt"}
 
@@ -147,6 +161,29 @@ def ingest_file(
             stats={"skipped": True, "reason": "content_hash already indexed"},
         )
 
+    # A document left mid-flight by a quota failure. Its chunk text is already
+    # committed, so resume from there instead of re-parsing the PDF and minting
+    # fresh ids that would orphan the partial vectors.
+    partial = _find_partial_by_digest(digest)
+    if partial is not None:
+        stored = _load_chunks(partial["id"])
+        if stored:
+            report(
+                f"resuming {partial['id']}: {len(stored)} chunks already stored, "
+                f"{partial['indexed_count']} already embedded"
+            )
+            return _index_document(
+                document_id=partial["id"],
+                chunks=stored,
+                filename=str(partial["title"]),
+                total_pages=partial["n_pages"] or 0,
+                usable_pages=int((partial["metadata"] or {}).get("usable_pages", 0) or 0),
+                flagged_pages=list((partial["metadata"] or {}).get("flagged_pages", [])),
+                started=started,
+                report=report,
+                settings=cfg,
+            )
+
     raw = load_document(path)
 
     report("assessing page quality")
@@ -179,62 +216,123 @@ def ingest_file(
     if not chunks:
         raise IngestionError(f"no chunks produced from {path.name}")
 
-    report(f"embedding {len(chunks)} chunks")
-    dense = embed_documents([c.content for c in chunks], cfg)
+    _persist_document(
+        document_id=document_id,
+        filename=path.name,
+        digest=digest,
+        chunks=chunks,
+        total_pages=total_pages,
+        usable_pages=len(usable),
+        flagged_pages=[n for n, _ in flagged],
+    )
 
-    # BM25 statistics must cover the whole corpus, not just this document, so
-    # IDF reflects how common a term is across everything indexed. Building a
-    # fresh index here would make rare terms look common within this file
-    # alone and distort every lexical score.
-    report("building lexical index")
-    vocab, bm25 = _load_lexical_state()
-    for chunk in chunks:
-        bm25.add_document(chunk.content)
-        vocab.add_many(bm25.doc_freqs[-1].keys())
+    return _index_document(
+        document_id=document_id,
+        chunks=chunks,
+        filename=path.name,
+        total_pages=total_pages,
+        usable_pages=len(usable),
+        flagged_pages=[n for n, _ in flagged],
+        started=started,
+        report=report,
+        settings=cfg,
+    )
 
-    sparse = build_sparse_vectors([c.content for c in chunks], bm25, vocab)
 
-    report("storing")
-    inserted = _store_document(document_id, path.name, digest, chunks, dense, sparse)
+def _index_document(
+    document_id: uuid.UUID,
+    chunks: list[Chunk],
+    filename: str,
+    total_pages: int,
+    usable_pages: int,
+    flagged_pages: list[int],
+    started: float,
+    report: Callable[[str], None],
+    settings: Settings,
+) -> IngestionResult:
+    """Embed and index a document's chunks, skipping any already stored.
+
+    Split from persistence so ingest can resume. On the Gemini free tier a
+    685-chunk document needs 22 embedding requests and the quota is exhausted
+    partway through often enough to matter; without this, every attempt either
+    completed or threw away all its work. Qdrant is consulted for what is
+    already indexed, so a re-run pays only for the remainder.
+    """
+    cfg = settings
+    already = indexed_chunk_ids(document_id, cfg)
+    pending = [c for c in chunks if c.id not in already]
+
+    if not pending:
+        report(f"all {len(chunks)} chunks already indexed")
+    else:
+        # Built once, outside the loop: every chunk is already committed to
+        # PostgreSQL by _persist_document, so the corpus statistics do not
+        # change as batches are indexed. Recomputing per batch would re-scan
+        # the whole corpus for each one.
+        report("building lexical index")
+        vocab, bm25 = _load_lexical_state()
+
+        # Indexed in slices rather than all at once, so a quota failure partway
+        # through still leaves the finished slices in Qdrant. Embedding
+        # everything first and indexing at the end would throw all of it away:
+        # embed_documents raises on the batch that hits the limit and discards
+        # the vectors already retrieved in memory.
+        for offset in range(0, len(pending), INDEX_BATCH_CHUNKS):
+            slice_ = pending[offset : offset + INDEX_BATCH_CHUNKS]
+            done = offset + len(slice_)
+            report(f"embedding {len(slice_)} chunks ({done}/{len(pending)})")
+
+            dense = embed_documents([c.content for c in slice_], cfg)
+            sparse = build_sparse_vectors([c.content for c in slice_], bm25, vocab)
+            index_chunks(slice_, dense, sparse, cfg)
+
+    with db_module.transaction() as cur:
+        cur.execute(
+            """
+            UPDATE documents
+            SET status = 'ready', n_chunks = %s, indexed_at = now(), updated_at = now()
+            WHERE id = %s
+            """,
+            (len(chunks), document_id),
+        )
 
     _record_ingest_job(
         document_id=document_id,
-        result_chunks=inserted,
+        result_chunks=len(chunks),
         total_pages=total_pages,
-        usable_pages=len(usable),
+        usable_pages=usable_pages,
         duration=round(time.monotonic() - started, 2),
     )
 
     return IngestionResult(
         document_id=document_id,
-        filename=path.name,
+        filename=filename,
         total_pages=total_pages,
-        usable_pages=len(usable),
-        chunk_count=inserted,
+        usable_pages=usable_pages,
+        chunk_count=len(chunks),
         duration_seconds=round(time.monotonic() - started, 2),
         stats={
-            "sha256": digest,
-            "flagged_pages": [n for n, _ in flagged],
-            "vocab_size": len(vocab),
+            "flagged_pages": flagged_pages,
+            "resumed_chunks": len(already),
         },
     )
 
 
-def _store_document(
+def _persist_document(
     document_id: uuid.UUID,
     filename: str,
     digest: str,
     chunks: list[Chunk],
-    dense: list[list[float]],
-    sparse: list,
-) -> int:
-    """Write chunks to PostgreSQL and vectors to Qdrant.
+    total_pages: int,
+    usable_pages: int,
+    flagged_pages: list[int],
+) -> None:
+    """Record the document and its chunks before any embedding is attempted.
 
-    PostgreSQL first, then Qdrant, then commit. If Qdrant fails the
-    transaction rolls back, so there is never a document whose rows exist but
-    whose vectors do not. Vectors without rows would be less harmful - search
-    skips unknown ids - but inconsistent state is still worth avoiding, and
-    the rollback is free.
+    Written as 'processing' and committed separately from indexing, so a
+    quota failure mid-embed leaves the chunk text on disk. The chunks table is
+    the durable record of what still needs a vector; without this a failed run
+    would have to re-parse the PDF and spend quota again from nothing.
     """
     now = datetime.now(UTC)
     with db_module.transaction() as cur:
@@ -242,9 +340,9 @@ def _store_document(
             """
             INSERT INTO documents (
                 id, title, source_type, source_uri, content_hash,
-                status, n_pages, n_chars, n_chunks, created_at
+                status, n_pages, n_chars, n_chunks, metadata, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, 'ready', %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, 'processing', %s, %s, %s, %s, %s)
             """,
             (
                 document_id,
@@ -252,9 +350,18 @@ def _store_document(
                 "pdf" if filename.lower().endswith(".pdf") else "txt",
                 filename,
                 digest,
-                max((c.page_number or 0) for c in chunks),
+                total_pages,
                 sum(len(c.content) for c in chunks),
                 len(chunks),
+                # Stored because a resumed run has no PDF in hand to recompute
+                # them from.
+                json.dumps(
+                    {
+                        "usable_pages": usable_pages,
+                        "flagged_pages": flagged_pages,
+                        "sha256": digest,
+                    }
+                ),
                 now,
             ),
         )
@@ -281,14 +388,6 @@ def _store_document(
                     list(chunk.heading_path or ()),
                 ),
             )
-
-        # Inside the transaction's scope but deliberately not part of it:
-        # Qdrant has no notion of our transaction, and a failed rollback would
-        # leave orphan vectors. They are harmless (search skips unknown ids)
-        # and the next ingest cleans up via delete_by_document.
-        index_chunks(chunks, dense, sparse, get_settings())
-
-    return len(chunks)
 
 
 def _load_lexical_state() -> tuple[Vocabulary, Bm25Index]:
@@ -350,6 +449,56 @@ def delete_document(document_id: uuid.UUID, settings: Settings | None = None) ->
         cur.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
         cur.execute("DELETE FROM documents WHERE id = %s", (document_id,))
     delete_by_document(document_id, settings or get_settings())
+
+
+def _find_partial_by_digest(digest: str) -> dict[str, object] | None:
+    """A document left in 'processing' by a previous failed run, if any."""
+    return db_module.query_one(
+        """
+        SELECT d.id, d.title, d.n_pages, d.metadata,
+               (SELECT COUNT(*) FROM chunks c WHERE c.document_id = d.id) AS chunk_count,
+               (SELECT COUNT(*) FROM ingest_jobs j
+                 WHERE j.document_id = d.id AND j.status = 'completed') AS indexed_count
+        FROM documents d
+        WHERE d.content_hash = %s AND d.status = 'processing'
+        ORDER BY d.created_at DESC
+        LIMIT 1
+        """,
+        (digest,),
+    )
+
+
+def _load_chunks(document_id: uuid.UUID) -> list[Chunk]:
+    """Reconstruct stored chunks in their original order.
+
+    Chunk ids are generated at chunking time and are the Qdrant point ids, so
+    a resumed run must reuse the persisted ids rather than mint new ones.
+    """
+    rows = db_module.query_all(
+        """
+        SELECT id, document_id, chunk_index, content, token_count,
+               char_start, char_end, page_number, section_title, heading_path
+        FROM chunks
+        WHERE document_id = %s
+        ORDER BY chunk_index
+        """,
+        (document_id,),
+    )
+    return [
+        Chunk(
+            id=row["id"],
+            document_id=row["document_id"],
+            chunk_index=row["chunk_index"],
+            content=row["content"],
+            token_count=row["token_count"],
+            char_start=row["char_start"],
+            char_end=row["char_end"],
+            page_number=row["page_number"],
+            section_title=row["section_title"],
+            heading_path=tuple(row["heading_path"] or ()),
+        )
+        for row in rows
+    ]
 
 
 def _find_ready_by_digest(digest: str) -> dict[str, object] | None:

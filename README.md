@@ -19,16 +19,33 @@ system says so instead of answering from the model's training data.
 | 5 | Evaluation harness (Recall@k, MRR, nDCG, citation precision) | done |
 | 6 | HTTP API and web UI | done |
 
-All phases are implemented, and **69 tests pass** with no network, no
-containers and no API key. Ruff is clean.
+All phases are implemented, **75 tests pass**, and the whole pipeline has been
+run against a real 296-page scanned PDF with real Gemini embeddings. Ruff is
+clean.
 
-The one thing not yet exercised against real data is a full corpus ingest and
-a scored evaluation. The Gemini free tier allows 1000 embedding requests per
-day, and a burst of batches spends that in seconds: the 296-page sample needs
-22 requests but a single unslewed run exhausted the daily quota. Requests are
-therefore paced 4s apart, which puts a full ingest in the region of 90 seconds
-of API time rather than a couple. See
-[Verifying it end to end](#verifying-it-end-to-end).
+## Measured results
+
+The 296-page Pakistan Studies sample ingests to 251 usable pages and 685
+chunks, and the six-question eval set scores:
+
+| Metric | Score |
+|---|---|
+| `recall_at_10` | 1.00 |
+| `ndcg_at_10` | 0.72 |
+| `mrr` | 0.67 |
+| `citation_precision` | 0.59 |
+| `grounded` | 1.00 |
+
+Recall is perfect and ranking is imperfect: every expected page is reachable,
+but the right one is usually not first. That gap is where a better reranker or
+chunk boundary would pay off, not the embedding model.
+
+Two caveats. Six questions is far too few to tune against, and the judgements
+in `evals/questions.json` were made by reading the top retrieval hits - which
+biases them toward pages the retriever already finds easy. Treat the table as
+a regression baseline, not a benchmark. And the corpus is OCR from a scan, so
+the text is noisy: section titles read "lVluslim" and many pages carry a running
+header where a heading should be.
 
 ## Architecture
 
@@ -136,10 +153,11 @@ question, 1 = same topic but incomplete), and the harness reports:
 uv run researchos evaluate --name baseline
 ```
 
-Before running, replace the `SUBSTITUTE_DOC_ID` placeholders in
-`evals/questions.json` with your real document id and the pages that actually
-answer each question. Left in place, recall is 0 by construction, which says
-nothing about the retriever.
+`evals/questions.json` in this repo already holds the judgements used for the
+table above, including the document id and page numbers. For a new corpus,
+replace them: run the query, read the top hits, and record the pages that
+actually answer the question. Guessed page numbers produce a score that looks
+precise and means nothing.
 
 Every run freezes its config alongside the numbers, because a retrieval score
 without its settings is meaningless later - 0.42 could mean the code regressed
@@ -171,18 +189,25 @@ Two deliberate choices in `/api/ask`:
 
 ## Verifying it end to end
 
-After the daily quota resets:
-
 ```bash
 uv run researchos ingest samples/pdfcoffee.com_pakistan-studies-mr-qazmi-pdf-free.pdf
 uv run researchos documents
 uv run researchos evaluate --name baseline
 ```
 
+Ingest is resumable. The document and its chunk text are committed before any
+embedding is attempted, then indexed in batches and marked ready. The Gemini
+free tier allows 1000 embedding requests per day and this 685-chunk corpus
+needs 22, but the quota is exhausted partway through often enough that
+all-or-nothing was not viable - a single run of this corpus took 25 attempts
+to finish, each picking up where the last stopped and paying only for the
+chunks still missing a vector. Re-ingesting a file that is already complete
+skips it, so an identical re-run costs no quota at all.
+
 ## Testing
 
 ```bash
-uv run pytest              # 69 tests, fully offline
+uv run pytest              # 75 tests, fully offline
 uv run ruff check .
 ```
 
@@ -216,14 +241,18 @@ The important ones:
   corpus needs ~22 batched requests, so the sample fits comfortably once the
   quota is fresh. Two things are worth knowing: Gemini's error text says
   `model: gemini-embedding-1.0` even when `gemini-embedding-001` is
-  requested, and its "retry in 12s" refers to the short-term rate limiter,
-  not the daily quota. `QuotaExhausted` is raised immediately rather than
-  retried, because retrying cannot succeed before midnight UTC.
+  requested, and its "retry in 12s" refers to the short-term rate limiter, not
+  the daily quota. `QuotaExhausted` stops the run immediately rather than
+  retrying, because retrying cannot succeed before midnight UTC - the
+  resumable ingest is what turns that dead end into a slow success instead.
 - **OCR quality drives everything.** The bundled sample is a scanned
   textbook; 45 of 296 pages are rejected as unusable. Chunk quality is capped
   by extraction quality.
-- **Heading detection is heuristic.** Tuned against one real document. It is
-  conservative by design, so it misses boundaries rather than inventing them.
+- **Heading detection is heuristic.** Tuned against one real document, and it
+  visibly struggles with OCR: it labels most pages with a chapter title
+  picked up from the running header rather than the section actually on the
+  page. Conservative by design - it misses boundaries rather than inventing
+  them - but `section_title` is unreliable on this corpus.
 - **BM25 `avgdl` drifts** as the corpus grows, since it is recomputed from the
   full chunk table. Ranking is not very sensitive to it, but a corpus that
   grew tenfold would warrant a rebuild.
