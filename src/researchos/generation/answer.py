@@ -167,12 +167,20 @@ def _build_answer(text: str, chunks: Sequence[RetrievedChunk], model: str) -> An
     outcome.
     """
     provided = {i + 1 for i in range(len(chunks))}
-    hallucinated = {int(n) for n in CITATION_RE.findall(text)} - provided
+    cited = {int(n) for n in CITATION_RE.findall(text)}
+    hallucinated = cited - provided
 
     if hallucinated:
         log.warning("model cited nonexistent sources %s; dropping them", sorted(hallucinated))
         text = CITATION_RE.sub(lambda m: m.group(0) if int(m.group(1)) in provided else "", text)
 
+    # Only the sources the answer actually cited become citations.
+    #
+    # Returning every chunk that was passed in would look plausible and be
+    # wrong twice over: a refusal that cites nothing would still report
+    # sources, and citation_precision - the metric that says whether the model
+    # pointed at the right chunk - would score the retrieved set instead of
+    # the model's choices, so it could never detect a bad citation.
     citations = [
         Citation(
             index=i + 1,
@@ -184,11 +192,15 @@ def _build_answer(text: str, chunks: Sequence[RetrievedChunk], model: str) -> An
             score=chunk.final_score,
         )
         for i, chunk in enumerate(chunks)
+        if i + 1 in cited
     ]
 
     return Answer(
         text=text,
         citations=citations,
-        grounded=bool(CITATION_RE.search(text)),
+        # Grounded means the answer points at real evidence, so it follows from
+        # the citations actually resolved rather than from a marker surviving
+        # anywhere in the text.
+        grounded=bool(citations),
         model=model,
     )

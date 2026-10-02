@@ -125,6 +125,17 @@ class SparseVector:
     def as_dict(self) -> dict[int, float]:
         return dict(zip(self.indices, self.values, strict=True))
 
+    def as_wire_dict(self) -> dict[str, list]:
+        """The shape Qdrant's REST API expects for a sparse vector.
+
+        Qdrant rejects a plain {index: weight} mapping with a 400 and the
+        unhelpful "data did not match any variant of untagged enum
+        VectorStruct" - the enum is SparseVector, whose fields are two
+        parallel lists. This exists so the upsert and query paths share one
+        definition; they disagreed once and ingest failed at the last step.
+        """
+        return {"indices": list(self.indices), "values": list(self.values)}
+
 
 @dataclass(slots=True)
 class Bm25Index:

@@ -39,7 +39,15 @@ class Settings(BaseSettings):
     gemini_api: str = Field(..., min_length=1, description="Google Gemini API key.")
 
     gemini_models: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["gemini-2.5-flash"],
+        # Ordered fallback chain, comma separated. The client tries each name in
+        # turn and moves on when the provider reports the model as missing or
+        # rate limited.
+        #
+        # Google's catalogue rotates and retired models start returning 404
+        # rather than a redirect, so a chain built once goes stale quietly.
+        # Listed newest-stable first, then the moving alias as a last resort:
+        # gemini-2.5-flash and gemini-2.0-flash both now 404.
+        default_factory=lambda: ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"],
         description=(
             "Ordered fallback chain, comma separated. The client tries each name "
             "in turn and moves on when the provider reports the model as "

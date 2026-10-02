@@ -333,3 +333,40 @@ def test_pacing_does_not_sleep_when_already_idle(monkeypatch) -> None:
     embedder._pace()
 
     assert slept == []
+
+
+def test_only_actually_cited_chunks_become_citations() -> None:
+    """Passing 5 chunks to the model does not make 5 citations.
+
+    Returning the whole retrieved set would report sources for an answer that
+    cited none, and would make citation_precision score what was retrieved
+    rather than what the model chose - so it could never catch a bad citation.
+    """
+    from researchos.generation.answer import _build_answer
+
+    answer = _build_answer("Only the first source matters [1].", _chunks(5), "test-model")
+    assert answer.cited_indices() == {1}
+    assert len(answer.citations) == 1
+
+
+def test_answer_with_no_citations_is_not_grounded() -> None:
+    from researchos.generation.answer import _build_answer
+
+    refusal = _build_answer("The corpus does not discuss this.", _chunks(4), "test-model")
+    assert refusal.grounded is False
+    assert refusal.citations == []
+
+
+def test_grounded_agrees_with_resolved_citations() -> None:
+    """These two fields are read together by the API and the UI, so they must
+    never disagree."""
+    from researchos.generation.answer import _build_answer
+
+    cited = _build_answer("Answered from evidence [2].", _chunks(3), "test-model")
+    assert cited.grounded is True
+    assert cited.cited_indices() == {2}
+    assert [c.index for c in cited.citations] == [2]
+
+    uncited = _build_answer("Nothing here.", _chunks(3), "test-model")
+    assert uncited.grounded is False
+    assert uncited.citations == []

@@ -128,6 +128,25 @@ def ingest_file(
 
     report(f"reading {path.name}")
     digest = file_digest(path)
+
+    # Deduplicate on content before doing any expensive work. Re-ingesting an
+    # unchanged file would otherwise spend a full quota of embeddings to
+    # reproduce a document already in the index - and on the Gemini free tier
+    # that quota is the scarce resource, not the CPU.
+    existing = _find_ready_by_digest(digest)
+    if existing is not None:
+        report(f"already indexed as {existing['id']}, skipping")
+        meta = existing["metadata"] or {}
+        return IngestionResult(
+            document_id=existing["id"],
+            filename=str(existing["title"]),
+            total_pages=existing["n_pages"] or 0,
+            usable_pages=int(meta.get("usable_pages", 0) or 0),
+            chunk_count=existing["n_chunks"] or 0,
+            duration_seconds=0.0,
+            stats={"skipped": True, "reason": "content_hash already indexed"},
+        )
+
     raw = load_document(path)
 
     report("assessing page quality")
@@ -331,6 +350,23 @@ def delete_document(document_id: uuid.UUID, settings: Settings | None = None) ->
         cur.execute("DELETE FROM chunks WHERE document_id = %s", (document_id,))
         cur.execute("DELETE FROM documents WHERE id = %s", (document_id,))
     delete_by_document(document_id, settings or get_settings())
+
+
+def _find_ready_by_digest(digest: str) -> dict[str, object] | None:
+    """The already-indexed document with this content hash, if any.
+
+    The partial unique index on content_hash only covers status='ready', so a
+    failed ingest can be retried without tripping over its own leftovers -
+    which is the point of making the constraint partial rather than plain.
+    """
+    return db_module.query_one(
+        """
+        SELECT id, title, n_pages, n_chunks, metadata
+        FROM documents
+        WHERE content_hash = %s AND status = 'ready'
+        """,
+        (digest,),
+    )
 
 
 def list_documents() -> list[dict]:

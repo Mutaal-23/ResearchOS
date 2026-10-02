@@ -127,7 +127,7 @@ def index_chunks(
         {
             # The chunk's own id IS the Qdrant point id. Never mint one here.
             "id": str(chunk.id),
-            "vector": {"dense": dense, "bm25": sparse.as_dict()},
+            "vector": {"dense": dense, "bm25": sparse.as_wire_dict()},
             "payload": {
                 "document_id": str(chunk.document_id),
                 "chunk_index": chunk.chunk_index,
@@ -187,13 +187,16 @@ def hybrid_search(
                 "limit": prefetch_limit,
             },
             {
-                "query": {"indices": query_sparse.indices, "values": query_sparse.values},
+                "query": query_sparse.as_wire_dict(),
                 "using": "bm25",
                 "limit": prefetch_limit,
             },
         ],
         "limit": limit,
         "query": {"fusion": "rrf"},
+        # Without this the fused result carries ids and scores only, and the
+        # payload is needed downstream to resolve a chunk back to its text.
+        "with_payload": True,
         # rrf.k defaults to 2 in Qdrant. The Cormack et al. formulation uses a
         # much larger damping constant (typically 60) that flattens the
         # contribution of small rank differences - without it, a document
@@ -215,7 +218,11 @@ def hybrid_search(
         data = _request(
             client,
             "POST",
-            f"/collections/{cfg.qdrant_collection}/points/search",
+            # /points/query, not /points/search. The fusion form below is the
+            # query endpoint's shape: it takes named vectors via prefetch[].query
+            # and a query of {"fusion": ...}. The older search endpoint wants
+            # prefetch[].vector and rejects the body outright with a 400.
+            f"/collections/{cfg.qdrant_collection}/points/query",
             json=body,
         )
 
@@ -225,7 +232,7 @@ def hybrid_search(
             score=float(point["score"]),
             payload=point.get("payload") or {},
         )
-        for point in data.get("result", [])
+        for point in data["result"]["points"]
     ]
 
 
