@@ -160,6 +160,23 @@ body {
   white-space: pre-wrap;
 }
 
+/* Degraded-ranking notice. Amber rather than red: ranking quality dropped,
+   the system did not fail. */
+.notice {
+  font-size: 0.8125rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.5rem;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.dark .notice {
+  border-color: #78350f;
+  background: rgba(120, 53, 15, 0.2);
+  color: #fcd34d;
+}
+
 .hidden {
   display: none;
 }

@@ -29,13 +29,27 @@ function renderAnswer(data) {
 
   const body = linkCitations(escapeHtml(data.answer).replace(/\n{2,}/g, '</p><p>'));
   $('answer-body').innerHTML = `<p>${body}</p>`;
-  $('answer-latency').textContent = `${data.latency_ms} ms`;
+  $('answer-latency').textContent = `${Math.round(data.latency_ms)} ms`;
+
+  // Say so when the ranking behind the citations is degraded. Without this the
+  // source scores are raw rank-fusion values that look like relevance, and a
+  // user has no way to know the reranker never ran.
+  const warning = $('rerank-warning');
+  if (data.reranked === false) {
+    warning.textContent =
+      data.rerank_note ||
+      'Ranking is degraded: passages are in raw hybrid-search order.';
+    warning.classList.remove('hidden');
+  } else {
+    warning.classList.add('hidden');
+  }
 
   const sources = $('citations');
   if (!data.citations.length) {
     sources.innerHTML =
       '<p class="text-sm text-stone-500">No citations. This answer is not grounded in the corpus.</p>';
   } else {
+    const label = data.reranked === false ? 'search rank' : 'score';
     sources.innerHTML = `
       <h3 class="text-sm font-semibold uppercase tracking-wide text-stone-500">Sources</h3>
       ${data.citations
@@ -47,7 +61,7 @@ function renderAnswer(data) {
           }</div>
           <div class="source-meta">${
             c.page_number ? `page ${c.page_number} · ` : ''
-          }score ${c.score}</div>
+          }${label} ${c.score}</div>
           <div class="source-excerpt">${escapeHtml(c.excerpt)}</div>
         </div>`,
         )

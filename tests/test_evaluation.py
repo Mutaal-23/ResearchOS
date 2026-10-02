@@ -347,3 +347,56 @@ def test_ndcg_repetition_does_not_inflate_a_mixed_ranking() -> None:
     # Order still decides, independently of repetition.
     assert ndcg_at_k(["b", "a"], grades, 10) < 1.0
     assert ndcg_at_k(["b", "b", "a"], grades, 10) < 1.0
+
+
+def test_generator_only_sees_top_k_passages(client, monkeypatch) -> None:
+    """The source list is a precision problem, not a recall one.
+
+    Handing the model all ~40 retrieved candidates let it cite the long tail -
+    one real query produced nine citations, several attached to claims the
+    cited page does not support. Citing a passage asserts the claim is in it,
+    so only the strongest passages should be offered as evidence.
+    """
+    from researchos.api.routers import search as search_router
+
+    seen: dict[str, int] = {}
+
+    async def fake_generate(question, chunks, settings=None):
+        seen["count"] = len(chunks)
+        raise NoEvidenceError("stop here")
+
+    from researchos.generation.answer import NoEvidenceError
+
+    monkeypatch.setattr(search_router, "generate_answer", fake_generate)
+    client.post("/api/ask", json={"question": "anything?"})
+
+    assert seen["count"] <= 6, seen
+
+
+def test_ask_reports_when_reranking_was_degraded(client, monkeypatch) -> None:
+    """A silent fallback presents raw rank-fusion values as relevance scores.
+
+    The user sees "score 0.5089" beside a citation and has no way to know the
+    reranker never ran, so the degradation has to be stated rather than logged.
+    """
+    from researchos.api.routers import search as search_router
+    from researchos.generation.answer import NoEvidenceError
+    from researchos.retrieval.search import RetrievedChunk
+
+    async def fake_retrieve(**kwargs):
+        chunks_by_id, _, _ = search_router.load_corpus()
+        chunk = next(iter(chunks_by_id.values()))
+        # rerank_score deliberately left None: exactly what a failed reranker
+        # produces, and what the API has to notice.
+        return [RetrievedChunk(chunk=chunk, fusion_score=0.5089)]
+
+    async def fake_generate(question, chunks, settings=None):
+        raise NoEvidenceError("nothing relevant")
+
+    monkeypatch.setattr(search_router, "retrieve", fake_retrieve)
+    monkeypatch.setattr(search_router, "generate_answer", fake_generate)
+
+    body = client.post("/api/ask", json={"question": "anything?"}).json()
+    assert body["reranked"] is False
+    assert body["rerank_note"]
+    assert "degraded" in body["rerank_note"].lower()

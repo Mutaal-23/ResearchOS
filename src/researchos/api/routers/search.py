@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 from researchos.config import get_settings
 from researchos.db import engine as db
 from researchos.generation.answer import (
+    GenerationError,
     NoEvidenceError,
     generate_answer,
 )
@@ -61,6 +62,13 @@ class AskResponse(BaseModel):
     grounded: bool
     citations: list[CitationOut]
     latency_ms: float
+    # Whether the reranker actually ran. A false here means the cited passages
+    # are in raw hybrid-fusion order, which is measurably worse at picking the
+    # right passage first - so the client can say so rather than presenting
+    # degraded ranking as normal.
+    reranked: bool = True
+    # Set when reranking fell back, explaining why.
+    rerank_note: str | None = None
 
 
 class SearchRequest(BaseModel):
@@ -215,8 +223,28 @@ async def ask_endpoint(payload: AskRequest) -> AskResponse:
     except QuotaExhausted as exc:
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)) from exc
 
+    # Only the strongest passages become sources for the generator.
+    #
+    # Passing all ~40 candidates made the model choose from a long tail of
+    # passages that do not answer the question, and it cited them anyway - one
+    # real query produced nine citations, several of them attached to claims
+    # the cited page does not support. Citing a passage is taken as evidence
+    # the claim is in it, so the source list is a precision problem, not a
+    # recall one: a few good passages beat a long list.
+    top_k = payload.top_k or settings.retrieval_top_k
+    sources = retrieved[:top_k]
+    # rerank_score stays None for every candidate when the reranker fell back,
+    # so this reads the degradation without changing retrieve()'s signature.
+    reranked = any(c.rerank_score is not None for c in sources)
+    rerank_note = (
+        None
+        if reranked
+        else "Ranking is degraded: the reranker was unavailable, so passages are "
+        "in raw hybrid-search order rather than relevance order."
+    )
+
     try:
-        answer = await generate_answer(payload.question, retrieved, settings)
+        answer = await generate_answer(payload.question, sources, settings)
     except NoEvidenceError as exc:
         # A legitimate outcome, not an error: the corpus does not cover it.
         return AskResponse(
@@ -225,8 +253,16 @@ async def ask_endpoint(payload: AskRequest) -> AskResponse:
             grounded=False,
             citations=[],
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
+            reranked=reranked,
+            rerank_note=rerank_note,
         )
-    except Exception as exc:
+    except GenerationError as exc:
+        # Rate limiting is not an upstream fault and is worth retrying, so 429
+        # tells the client to wait; 502 would tell it the service is broken.
+        if "429" in str(exc) or "rate limit" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc)
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"generation failed: {exc}",
@@ -256,4 +292,6 @@ async def ask_endpoint(payload: AskRequest) -> AskResponse:
         grounded=answer.grounded,
         citations=citations,
         latency_ms=round((time.perf_counter() - started) * 1000, 1),
+        reranked=reranked,
+        rerank_note=rerank_note,
     )

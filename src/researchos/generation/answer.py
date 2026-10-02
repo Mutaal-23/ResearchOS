@@ -39,7 +39,13 @@ Rules you must follow:
 do not fill gaps from your own knowledge, and do not speculate.
 4. If the sources disagree, say that they disagree and show both positions.
 5. Be concise. Quote sparingly and prefer short paraphrases.
-6. Never invent a source number that was not given to you."""
+6. Never invent a source number that was not given to you.
+7. Cite a source ONLY if that passage genuinely states the fact. A source that \
+is merely on the same topic is not evidence for a claim. If you cannot point \
+to the passage that supports a sentence, leave that sentence out.
+8. Prefer a small number of citations, normally two to four. Listing many \
+sources dilutes the evidence and makes the answer harder to check. Do not cite \
+every source you were given - most of them will not be relevant."""
 
 # [1] or [2][3] - captured so citations can be validated against what was
 # actually retrieved.
@@ -143,6 +149,18 @@ async def generate_answer(
 
         if response.status_code != 200:
             last_error = GenerationError(f"{model} returned {response.status_code}")
+            # 429 is account-wide, not model-specific: the free generation tier
+            # allows ~20 requests per minute across the key. Trying the rest of
+            # the chain cannot succeed and each attempt costs another round
+            # trip - one real query spent 28 seconds walking three models to
+            # arrive at the same rejection. Surface it now so the caller can
+            # retry shortly instead.
+            if response.status_code == 429:
+                raise GenerationError(
+                    f"generation rate limit reached ({model} returned 429). "
+                    "The free tier allows about 20 requests a minute; wait a "
+                    "moment and retry."
+                ) from None
             log.warning("generation model %s failed: %s", model, response.status_code)
             continue
 
